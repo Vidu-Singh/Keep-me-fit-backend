@@ -1,11 +1,29 @@
+from datetime import timedelta
+
+from django.http import JsonResponse
 from django.shortcuts import render
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from .models import *
+import requests
 from .serializers import *
 import random
-from .utils import Util
+import pickle
+import datefinder
+from googleapiclient.discovery import build
+
+# used in steps,colories api
+access_token = "ya29.a0ARrdaM_vzkkn6kLUbrM2xXL5gVrGJ37IgPQmkFDevSHA5c6dz0ciNjbKVjjJjOfQpQRcjBT2xhu2IvGp3aXax5nmDg2TNeMfKl9bzBowL4FqP8SpzcGh1eG0U71LjlXxYYluYQ2cR9zAumkEZnwlkaGjVngP"
+header = {'Authorization': 'Bearer {}'.format(access_token)}
+start_time = 1653503405000
+end_time = 1653589795000
+
+# credentials for calender integration
+scopes = ['https://www.googleapis.com/auth/calendar']
+credentials = pickle.load(open("/home/priyesjain/Keep-me-fit-backend/FitMe/register/token.pkl","rb"))
+
+
 
 # Register User API
 class RegisterUser(APIView):
@@ -27,7 +45,6 @@ class RegisterUser(APIView):
 
             serializer.is_valid(raise_exception=True)
             serializer.save()
-            Util.send_mail(data['email'], number)
             user = {
                 "user_email": serializer.data.get("email")
             }
@@ -44,17 +61,10 @@ class LoginUser(APIView):
         user = PersonSerializer(result).data
         if user.get("password") != data["password"]:
             return Response({"error": "Invalid Password"}, status=status.HTTP_406_NOT_ACCEPTABLE)
-        number = random.randint(1000, 9999)
-        user =  Person.objects.get(email=data["email"])
-        user_code={
-            "code":number
+        user = {
+            "User Email": user.get("email")
         }
-        serializer=PersonSerializer(user,data=user_code,partial=True)
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
-        print(serializer.data)
-        Util.send_mail(data['email'], number)
-        return Response({"message": "Login successful"}, status=status.HTTP_202_ACCEPTED)
+        return Response(user, status=status.HTTP_202_ACCEPTED)
 
 # Code Authentication(user/id)
 
@@ -78,68 +88,131 @@ class ProfileView(APIView):
         serializer.save()
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-# API to add food items
-class AddFood(APIView):
-    def post(self,request):
-        data=request.data
-        serializer= FoodSerializer(data=data)
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    def steps(self,request):
+        url = "https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate"
+        data = {
+               "aggregateBy": [
+              {
+                    "dataSourceId": "derived:com.google.step_count.delta:com.google.android.gms:estimated_steps"
+              }
+              ],
+            "startTimeMillis":start_time,
+            "endTimeMillis": end_time,
+            "bucketByTime": {
+            "durationMillis": 86400000
+             }
+        }
+        response = requests.post(url, headers=header,json=data).json()
+        print(response["bucket"][0]["dataset"][0]['point'][0]['value'][0]['intVal'])
+        return Response(response["bucket"][0]["dataset"][0]['point'][0]['value'][0]['intVal'],status=status.HTTP_200_OK)
 
-# API to get all food items
-class GetFood(APIView):
-    def get(self,request):
-        all_food_items= Food.objects.all()
-        response= FoodSerializer(all_food_items,many=True).data
+    def calories(self,request):
+        url = "https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate"
+        data = {
+               "aggregateBy": [
+              {
+                    "dataSourceId": "derived:com.google.calories.expended:com.google.android.gms:merge_calories_expended"
+              }
+              ],
+            "startTimeMillis":start_time,
+            "endTimeMillis": end_time,
+            "bucketByTime": {
+            "durationMillis": 86400000
+             }
+        }
+        response = requests.post(url, headers=header,json=data).json()
+        # print(response)
+        print(response["bucket"][0]["dataset"][0]['point'][0]['value'][0]['fpVal'])
+        return Response(response["bucket"][0]["dataset"][0]['point'][0]['value'][0]['fpVal'],status=status.HTTP_200_OK)
+
+
+    def distancetravelled(self,request):
+        url = "https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate"
+        data = {
+               "aggregateBy": [
+              {
+                    "dataSourceId": "derived:com.google.distance.delta:com.google.android.gms:merge_distance_delta"
+              }
+              ],
+            "startTimeMillis":start_time,
+            "endTimeMillis": end_time,
+            "bucketByTime": {
+            "durationMillis": 86400000
+             }
+        }
+        response = requests.post(url, headers=header,json=data).json()
+        print(response["bucket"][0]["dataset"][0]['point'][0]['value'][0]['fpVal'])
+        # print(response["bucket"][0]["dataset"][0]['point'][0]['value'][0]['fpVal'])
+        return Response(response["bucket"][0]["dataset"][0]['point'][0]['value'][0]['fpVal'],status=status.HTTP_200_OK)
+
+    def heartrate(self,request):
+        url = "https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate"
+        data = {
+               "aggregateBy": [
+              {
+                    "dataSourceId": "derived:com.google.heart_rate.bpm:com.google.android.gms:merge_heart_rate_bpm"
+              }
+              ],
+            "startTimeMillis":start_time,
+            "endTimeMillis": end_time,
+            "bucketByTime": {
+            "durationMillis": 86400000
+             }
+        }
+        response = requests.post(url, headers=header,json=data).json()
+        print(response)
+        # print(response["bucket"][0]["dataset"][0]['point'][0]['value'][0]['fpVal'])
+        return Response(response,status=status.HTTP_200_OK)
+
+    def get_all_events_of_user(self,request):
+        service = build("calendar", "v3", credentials=credentials)
+        result = service.calendarList().list().execute()
+        calendar_id = result['items'][0]['id']
+        all_events = service.events().list(calendarId=calendar_id).execute()
+        response = all_events
         return Response(response, status=status.HTTP_200_OK)
 
-# API to add diet plan for the user
-class AddDietView(APIView):
-    def post(self,request):
-        data = request.data
-        user_id = self.request.query_params.get('uid')
-        all_food= Food.objects.all()
-        breakfast= all_food.get(food_item=data["breakfast_food"])
-        breakfast_data = FoodSerializer(breakfast).data
-        break_id=breakfast_data.get('id')
-        print(break_id)
-        breakfast_protein= breakfast_data.get("protein")
-        breakfast_fat = breakfast_data.get("fat")
-        breakfast_carb= breakfast_data.get("carb")
-        breakfast_cal = breakfast_data.get("calories")
+    def create_event(start_time_str, summary, duration=1, description=None, location=None, attendees=[]):
+        service = build("calendar", "v3", credentials=credentials)
+        result = service.calendarList().list().execute()
+        calendar_id = result['items'][0]['id']
+        timezone = 'Asia/Kolkata'
+        matches = list(datefinder.find_dates(start_time_str))
+        if len(matches):
+            start_time = matches[0]
+            end_time = start_time + timedelta(hours=duration)
 
-        lunch= all_food.get(food_item= data["lunch_food"])
-        lunch_data = FoodSerializer(lunch).data
-        lunch_id=lunch_data.get('id')
-
-        lunch_protein= lunch_data.get("protein")
-        lunch_fat= lunch_data.get("fat")
-        lunch_carb= lunch_data.get("carb")
-        lunch_cal= lunch_data.get("calories")
-
-        dinner= all_food.get(food_item =data["dinner_food"])
-        dinner_data = FoodSerializer(dinner).data
-        dinner_id=dinner_data.get('id')
-
-        dinner_cal=dinner_data.get("calories")
-        total_cal= breakfast_cal+lunch_cal+dinner_cal
-        diet={
-            "user_diet":user_id,
-            "breakfast_food": break_id,
-            "breakfast_quantity": data["breakfast_quantity"],
-            "lunch_food" : lunch_id,
-            "lunch_quantity": data["lunch_quantity"],
-            "dinner_food": dinner_id,
-            "dinner_quantity": data["dinner_quantity"],
-            "water" : data["water"],
-            "total_calories": total_cal
+        event = {
+            'summary': summary,
+            'location': location,
+            'description': description,
+            'start': {
+                'dateTime': start_time.strftime("%Y-%m-%dT%H:%M:%S"),
+                'timeZone': timezone,
+            },
+            'end': {
+                'dateTime': end_time.strftime("%Y-%m-%dT%H:%M:%S"),
+                'timeZone': timezone,
+            },
+            'attendees': attendees,
+            'reminders': {
+                'useDefault': False,
+                'overrides': [
+                    {'method': 'email', 'minutes': 24 * 60},
+                    {'method': 'popup', 'minutes': 10},
+                ],
+            },
         }
-        serializer= DietSerializer(data=diet)
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return service.events().insert(calendarId=calendar_id, body=event).execute()
 
+    def delete_event(self,request):
+        service = build("calendar", "v3", credentials=credentials)
+        result = service.calendarList().list().execute()
+        calendar_id = result['items'][0]['id']
+        timezone = 'Asia/Kolkata'
+        count = service.events().delete(calendarId=calendar_id, eventId='960g87mr2r6pb2otd0n9a2j85c').execute();
+        return JsonResponse({'message': '{} Event was deleted successfully!'.format(count[0])},
+                            status=status.HTTP_204_NO_CONTENT)
 
 # Coach for Well-being connect
 class ExpertsView(APIView):
